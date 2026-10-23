@@ -392,4 +392,79 @@ mod tests {
         assert_eq!(parse_byte_size("abc"), None);
         assert_eq!(parse_byte_size("10xb"), None);
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        const UNITS: [(&str, u64); 13] = [
+            ("", 1),
+            ("b", 1),
+            ("k", 1_000),
+            ("kb", 1_000),
+            ("kib", 1_024),
+            ("m", 1_000_000),
+            ("mb", 1_000_000),
+            ("mib", 1_048_576),
+            ("g", 1_000_000_000),
+            ("gb", 1_000_000_000),
+            ("gib", 1_073_741_824),
+            ("tb", 1_000_000_000_000),
+            ("tib", 1_099_511_627_776),
+        ];
+
+        proptest! {
+            // Whole numbers of any unit are an exact amount of bytes
+            #[test]
+            fn parses_whole_numbers_exactly(value in 0..1_000_000u64, unit in 0..UNITS.len()) {
+                let (suffix, multiplier) = UNITS[unit];
+
+                prop_assert_eq!(
+                    parse_byte_size(&format!("{value}{suffix}")),
+                    Some(value * multiplier)
+                );
+            }
+
+            // A size is never negative, so it can't be parsed as one
+            #[test]
+            fn never_parses_negative_numbers(value in 1..1_000_000u64, unit in 0..UNITS.len()) {
+                let (suffix, _) = UNITS[unit];
+
+                prop_assert_eq!(parse_byte_size(&format!("-{value}{suffix}")), None);
+            }
+
+            // Decimals are rounded to the nearest byte, not truncated by
+            // floating point error (`256.27mb` is 256,269,999.99... as a float)
+            #[test]
+            fn parses_decimals_to_the_nearest_byte(whole in 0..1_000u64, hundredths in 0..100u64, unit in 2..UNITS.len()) {
+                let (suffix, multiplier) = UNITS[unit];
+                let expected = whole * multiplier + hundredths * multiplier / 100;
+
+                prop_assert_eq!(
+                    parse_byte_size(&format!("{whole}.{hundredths:02}{suffix}")),
+                    Some(expected)
+                );
+            }
+        }
+    }
+
+    /// Bugs found by the properties above, as minimal tests that fail until fixed.
+    mod bugs {
+        use super::*;
+
+        // `-1gb` is parsed as `-1.0 * 1e9`, which saturates to `0` when cast
+        // to `u64`. A `cas.maxSize` of 0 makes GC evict every manifest, as
+        // each is over budget, instead of the setting being rejected.
+        #[test]
+        fn rejects_negative_sizes() {
+            assert_eq!(parse_byte_size("-1gb"), None);
+        }
+
+        // The value is truncated (`as u64`) after the floating point
+        // multiplication, so it may be a byte short
+        #[test]
+        fn parses_decimals_to_the_nearest_byte() {
+            assert_eq!(parse_byte_size("256.27mb"), Some(256_270_000));
+        }
+    }
 }

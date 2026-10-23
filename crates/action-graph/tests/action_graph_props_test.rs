@@ -525,7 +525,7 @@ async fn build(
 
     for target in run {
         let task = workspace_graph
-            .get_task_from_project(&format!("p{}", target.0), &format!("t{}", target.1))
+            .get_task_from_project(format!("p{}", target.0), format!("t{}", target.1))
             .unwrap();
 
         if let Err(error) = builder.run_task(&task, &reqs).await {

@@ -74,9 +74,9 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         6 => Just(Op::Run),
         2 => Just(Op::RunStopped),
         1 => Just(Op::RunWithFailingRequirement),
-        1 => Just(Op::DeleteRequiredOutput),
-        1 => Just(Op::DeleteOptionalOutput),
-        1 => Just(Op::DeleteGlobOutputs),
+        2 => Just(Op::DeleteRequiredOutput),
+        2 => Just(Op::DeleteOptionalOutput),
+        2 => Just(Op::DeleteGlobOutputs),
         1 => Just(Op::AddUnrelatedGlobOutput),
         1 => Just(Op::EditWorkspaceConfig),
         1 => Just(Op::EditToolchainsConfig),
@@ -96,11 +96,10 @@ fn focused_op_strategy() -> impl Strategy<Value = Op> {
     ]
 }
 
-fn ops_strategy() -> impl Strategy<Value = Vec<Op>> {
-    prop_oneof![
-        prop::collection::vec(op_strategy(), 1..24),
-        prop::collection::vec(focused_op_strategy(), 1..24),
-    ]
+/// Operations that start from any input.
+fn ops_strategy(op: impl Strategy<Value = Op>) -> impl Strategy<Value = Vec<Op>> {
+    (0..INPUTS.len(), prop::collection::vec(op, 1..24))
+        .prop_map(|(input, ops)| std::iter::once(Op::SetInput(input)).chain(ops).collect())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -494,19 +493,19 @@ fn cases(default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-fn run_property(cas_enabled: bool) {
+fn run_property(cas_enabled: bool, op: impl Strategy<Value = Op>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
 
     let mut runner = TestRunner::new(Config {
-        cases: cases(32),
+        cases: cases(64),
         failure_persistence: None,
         ..Config::default()
     });
 
-    let result = runner.run(&ops_strategy(), |ops| {
+    let result = runner.run(&ops_strategy(op), |ops| {
         runtime.block_on(run_ops(ops, cas_enabled, false))
     });
 
@@ -517,12 +516,19 @@ fn run_property(cas_enabled: bool) {
 
 #[test]
 fn outputs_always_match_inputs_with_archives() {
-    run_property(false);
+    run_property(false, op_strategy());
 }
 
 #[test]
 fn outputs_always_match_inputs_with_cas() {
-    run_property(true);
+    run_property(true, op_strategy());
+}
+
+// Hydrating from an archive never fails part way through, as it's a cache
+// miss when unpacking fails, which deletes the outputs
+#[test]
+fn recovers_from_failed_hydrations_with_cas() {
+    run_property(true, focused_op_strategy());
 }
 
 /// Counterexamples found by the properties above, that are excluded from them.

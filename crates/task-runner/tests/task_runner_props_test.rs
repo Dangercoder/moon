@@ -246,7 +246,7 @@ impl Model {
     }
 }
 
-async fn run_ops(ops: Vec<Op>, cas_enabled: bool, strict: bool) -> Result<(), TestCaseError> {
+async fn run_ops(ops: Vec<Op>, cas_enabled: bool) -> Result<(), TestCaseError> {
     let container = TaskRunnerContainer::new("props", "derive").await;
     container.sandbox.enable_git();
 
@@ -417,11 +417,9 @@ async fn run_ops(ops: Vec<Op>, cas_enabled: bool, strict: bool) -> Result<(), Te
                 let actual = Outputs::read(&out_dir);
                 let expected = Outputs::expected(model.input());
 
-                // Known issue: hydrating from a local archive doesn't delete the
-                // existing outputs first, so stale outputs that are not in the
-                // archive are left behind (see `known_issues`). While locked,
-                // existing outputs can't be deleted either
-                if model.locked || (outcome == Outcome::Cached && !cas_enabled && !strict) {
+                // While locked, existing outputs can't be deleted, so they may
+                // be left behind
+                if model.locked {
                     prop_assert!(
                         actual.contains(&expected),
                         "outputs on disk are not from the current input at {}: {:?}",
@@ -506,7 +504,7 @@ fn run_property(cas_enabled: bool, op: impl Strategy<Value = Op>) {
     });
 
     let result = runner.run(&ops_strategy(op), |ops| {
-        runtime.block_on(run_ops(ops, cas_enabled, false))
+        runtime.block_on(run_ops(ops, cas_enabled))
     });
 
     if let Err(error) = result {
@@ -531,29 +529,30 @@ fn recovers_from_failed_hydrations_with_cas() {
     run_property(true, focused_op_strategy());
 }
 
-/// Counterexamples found by the properties above, that are excluded from them.
-/// Run them with `--run-ignored only`.
-mod known_issues {
+/// Bugs found by the properties above, as minimal tests that fail until fixed.
+mod bugs {
     use super::*;
 
-    fn run_strict(ops: Vec<Op>) {
+    fn run_with_archives(ops: Vec<Op>) {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
 
-        if let Err(error) = runtime.block_on(run_ops(ops, false, true)) {
+        if let Err(error) = runtime.block_on(run_ops(ops, false)) {
             panic!("{error}");
         }
     }
 
     // `OutputHydrater::unpack_local_archive` only deletes the existing outputs
     // when unpacking fails, while hydrating from storage deletes them before
-    // unpacking. Outputs on disk that are not in the archive are left behind
+    // unpacking. Outputs on disk that are not in the archive are left behind,
+    // like `out/glob/b.txt` here, after running `a`, then `b`, then `a` again
+    // (hydrated from the archive of the first run). Archives are the default,
+    // unless the `cas_outputs_cache` experiment is enabled.
     #[test]
-    #[ignore = "known issue: hydrating from a local archive leaves stale outputs"]
     fn hydrating_from_an_archive_removes_outputs_from_another_input() {
-        run_strict(vec![
+        run_with_archives(vec![
             Op::Run,
             Op::SetInput(1),
             Op::Run,
@@ -562,9 +561,10 @@ mod known_issues {
         ]);
     }
 
+    // A file matched by an output glob that the task didn't create changes the
+    // outputs fingerprint, so the outputs are hydrated, but it's left behind
     #[test]
-    #[ignore = "known issue: hydrating from a local archive leaves stale outputs"]
     fn hydrating_from_an_archive_removes_unrelated_outputs() {
-        run_strict(vec![Op::Run, Op::AddUnrelatedGlobOutput, Op::Run]);
+        run_with_archives(vec![Op::Run, Op::AddUnrelatedGlobOutput, Op::Run]);
     }
 }

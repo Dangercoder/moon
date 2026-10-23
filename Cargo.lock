@@ -6561,6 +6561,7 @@ dependencies = [
  "moon_test_utils",
  "moon_workspace",
  "petgraph 0.8.3",
+ "proptest",
  "rustc-hash",
  "scc",
  "starbase_sandbox",

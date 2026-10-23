@@ -359,16 +359,8 @@ impl Model<'_> {
     }
 
     fn check_exclusive(&self, index: usize) -> Result<(), TestCaseError> {
-        self.check_exclusive_among(index, self.running.iter())
-    }
-
-    fn check_exclusive_among<'r>(
-        &self,
-        index: usize,
-        running: impl Iterator<Item = &'r usize>,
-    ) -> Result<(), TestCaseError> {
         if let Some(id) = self.exclusive_id(index) {
-            for running in running {
+            for running in &self.running {
                 prop_assert!(
                     self.exclusive_id(*running) != Some(id),
                     "{} was dispatched while {} (the same action) was running",
@@ -421,13 +413,6 @@ impl Model<'_> {
                         "{label} ran after the abort, while {dep_label} (that it cleans up after) was still running"
                     );
                 }
-                // Known issue: when the cleanup job also cleans up after the job
-                // that it waits on, only the cleanup is checked, so it may run
-                // although that job never started (see `known_issues`)
-                TaskDependencyType::Wait
-                    if self.edges_from(index).any(|(to, edge)| {
-                        to == dep && matches!(edge, TaskDependencyType::Cleanup)
-                    }) => {}
                 TaskDependencyType::Wait => {
                     prop_assert!(
                         self.has_started(dep) || self.running.contains(&dep),
@@ -437,14 +422,7 @@ impl Model<'_> {
             };
         }
 
-        // Known issue: only other cleanup jobs are checked for the same action,
-        // and not jobs that were running when aborted (see `known_issues`)
-        self.check_exclusive_among(
-            index,
-            self.running
-                .iter()
-                .filter(|running| self.cleanups.contains(running)),
-        )
+        self.check_exclusive(index)
     }
 }
 
@@ -600,10 +578,8 @@ fn dispatches_every_job_in_dependency_order() {
     }
 }
 
-/// Counterexamples found by the properties above, that are excluded from them,
-/// as they need a decision on how the dispatcher should behave. Run them with
-/// `--run-ignored only`.
-mod known_issues {
+/// Bugs found by the property above, as minimal tests that fail until fixed.
+mod bugs {
     use super::*;
 
     fn complete(context: &JobContext, index: usize, started: bool) {
@@ -631,7 +607,6 @@ mod known_issues {
     // cleanup only (`else if` in `can_cleanup_after_abort`), so the wait isn't
     // honored, although the builder links both relationships to be honored
     #[tokio::test(flavor = "current_thread")]
-    #[ignore = "known issue: cleanup that also waits on its parent runs when the parent never started"]
     async fn cleanup_that_also_waits_runs_when_parent_never_started() {
         // `c` cleans up after and waits on `p`, which requires (and waits on) `s`
         let spec = GraphSpec {
@@ -664,7 +639,6 @@ mod known_issues {
     // jobs, so a cleanup job may run alongside the same action (with other
     // args or env) that was running when the pipeline was aborted
     #[tokio::test(flavor = "current_thread")]
-    #[ignore = "known issue: same action runs in parallel once aborted"]
     async fn cleanup_runs_alongside_the_same_action_once_aborted() {
         // `t --a` requires `p`, and `t` cleans up after `p`
         let spec = GraphSpec {

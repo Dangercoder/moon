@@ -18,5 +18,8 @@ scc = { workspace = true }
 starbase_utils = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true

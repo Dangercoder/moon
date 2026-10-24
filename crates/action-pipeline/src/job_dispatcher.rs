@@ -681,6 +681,9 @@ fn unblock(blocked_by: &mut [usize], ready_nodes: &mut usize, dependents: &[Node
 }
 
 #[cfg(test)]
+mod props;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::abort_state::AbortState;

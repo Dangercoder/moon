@@ -40,6 +40,7 @@ tracing = { workspace = true }
 [dev-dependencies]
 moon_affected = { path = "../affected" }
 moon_test_utils = { path = "../test-utils" }
+proptest = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 serde_json = { workspace = true }
 starbase_sandbox = { workspace = true }
